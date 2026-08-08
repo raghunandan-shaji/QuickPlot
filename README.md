@@ -2,7 +2,8 @@
 
 QuickPlot is a lightweight, N-series-first research workspace for economic, financial, commodity, energy, and related time series. It turns a research idea into a reproducible prepared dataset, interactive exploration, cautious diagnostics, and a provenance-rich export without requiring a database or user account.
 
-> Screenshot placeholder: add a production screenshot after deployment.
+<img width="1680" height="959" alt="image" src="https://github.com/user-attachments/assets/14255c41-36f5-489a-81af-fed9da9b50a6" />
+
 
 ## What it does
 
