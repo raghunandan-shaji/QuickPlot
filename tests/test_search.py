@@ -1,12 +1,17 @@
 import pandas as pd
+import pytest
 
 from series_lab.models import SeriesCandidate
 from series_lab.services.search import (
     apply_coverage_requirement,
+    candidate_relevance,
     evaluate_coverage,
     rank_candidates_by_coverage,
+    rank_candidates_by_relevance,
     rank_catalog,
+    search_providers,
 )
+from series_lab.ui.search_section import candidate_is_added
 
 
 def test_exact_id_ranks_before_fuzzy_title():
@@ -100,3 +105,76 @@ def test_missing_interval_labels_are_calendar_ranges():
         "2000-01-01 → 2004-12-31",
         "2011-01-01 → 2020-12-31",
     )
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_provider"),
+    [
+        ("comex silver", "yahoo"),
+        ("gold lbma", "yahoo"),
+        ("silver ppi", "bls"),
+        ("gold mining ppi", "bls"),
+    ],
+)
+def test_query_intent_ranks_the_right_candidate_family(query, expected_provider):
+    candidates = [
+        SeriesCandidate("yahoo", "SI=F", "Silver and Gold Futures", instrument_type="FUTURE", exchange="COMEX"),
+        SeriesCandidate("fred", "METALPRICE", "Global market price of silver and gold", description="Price index"),
+        SeriesCandidate("bls", "PPI-METALS", "PPI industry data for Gold ore and silver ore mining"),
+        SeriesCandidate("world_bank", "NATURAL-CAPITAL", "Nonrenewable natural capital: gold and silver"),
+    ]
+    ranked = rank_candidates_by_relevance(candidates, query)
+    assert ranked[0].provider == expected_provider
+    if query in {"comex silver", "gold lbma"}:
+        assert candidate_relevance(ranked[0], query) > candidate_relevance(
+            next(item for item in ranked if item.provider == "world_bank"), query
+        )
+
+
+def test_new_candidate_at_same_result_position_does_not_inherit_added_state():
+    old = SeriesCandidate("fred", "OLD", "Old result")
+    replacement = SeriesCandidate("fred", "NEW", "New result")
+    workspace = {"fred:OLD": object()}
+    assert candidate_is_added(old, workspace)
+    assert not candidate_is_added(replacement, workspace)
+
+
+def test_identical_provider_search_is_cached_but_a_new_query_is_not():
+    class CountingProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def search(self, query, limit=8):
+            self.calls += 1
+            return [SeriesCandidate("test", query, query)]
+
+    provider = CountingProvider()
+    providers = {"Test": provider}
+    search_providers(providers, "gold", ["Test"])
+    search_providers(providers, "gold", ["Test"])
+    assert provider.calls == 1
+    search_providers(providers, "silver", ["Test"])
+    assert provider.calls == 2
+
+
+def test_yahoo_availability_is_bounded_and_cached():
+    class CountingYahoo:
+        def __init__(self):
+            self.search_calls = 0
+            self.availability_calls = 0
+
+        def search(self, query, limit=8):
+            self.search_calls += 1
+            return [SeriesCandidate("yahoo", f"Y{i}", f"Gold future {i}") for i in range(6)]
+
+        def resolve_availability(self, item):
+            self.availability_calls += 1
+            return item
+
+    yahoo = CountingYahoo()
+    providers = {"Yahoo": yahoo}
+    kwargs = dict(requested_start="2000-01-01", requested_end="2025-12-31")
+    search_providers(providers, "gold futures", ["Yahoo"], **kwargs)
+    search_providers(providers, "gold futures", ["Yahoo"], **kwargs)
+    assert yahoo.search_calls == 1
+    assert yahoo.availability_calls == 3

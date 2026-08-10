@@ -5,9 +5,10 @@ from datetime import date
 
 import streamlit as st
 
+from series_lab.config import redact_secrets
 from series_lab.models import WorkspaceSeries, resolve_candidate
 from series_lab.services.fetch import fetch_resolved
-from series_lab.services.search import search_providers
+from series_lab.services.search import candidate_unique_key, search_providers
 from series_lab.state import add_to_workspace
 
 
@@ -36,12 +37,26 @@ def _coverage_html(candidate) -> str:
     )
 
 
-def _fetch_and_add(candidate, providers, resolution=None, value_field=None) -> None:
+def candidate_is_added(candidate, workspace, resolution=None, value_field=None) -> bool:
+    try:
+        resolved = resolve_candidate(candidate, resolution, value_field)
+    except Exception:
+        return False
+    return resolved.series_key in workspace
+
+
+def _fetch_and_add(candidate, providers, resolution=None, value_field=None) -> tuple[bool, str]:
     resolved = resolve_candidate(candidate, resolution, value_field)
-    with st.spinner(f"Fetching {candidate.title}…"):
-        fetched = fetch_resolved(providers, resolved)
+    try:
+        with st.spinner(f"Fetching {candidate.title}…"):
+            fetched = fetch_resolved(providers, resolved)
+    except Exception as exc:
+        message = str(redact_secrets(str(exc))) or "This series is unavailable for the selected resolution."
+        st.session_state.search_unavailable[resolved.series_key] = message
+        return False, resolved.series_key
     add_to_workspace(st.session_state, WorkspaceSeries(fetched))
-    st.success(f"Added {candidate.title}.")
+    st.session_state.search_unavailable.pop(resolved.series_key, None)
+    return True, resolved.series_key
 
 
 def render_search(providers: dict) -> None:
@@ -78,6 +93,13 @@ def render_search(providers: dict) -> None:
     if submitted:
         st.session_state.search_query = query.strip()
         st.session_state.selected_providers = selected
+        st.session_state.search_results = []
+        st.session_state.search_failures = {}
+        st.session_state.search_partial_results = []
+        st.session_state.search_unknown_results = []
+        st.session_state.search_coverage_message = None
+        st.session_state.search_unavailable = {}
+        st.session_state.search_resolution_active = {}
         if not query.strip():
             st.warning("Enter a search phrase or exact series ID.")
         elif not selected:
@@ -112,7 +134,7 @@ def render_search(providers: dict) -> None:
         st.markdown('<div class="results-label">search results</div>', unsafe_allow_html=True)
         with st.container(height=340, border=True, key="search_results_region"):
             for source, message in st.session_state.search_failures.items():
-                st.caption(f"{source}: {message}")
+                st.caption(f"{source} unavailable — {message}")
             if st.session_state.search_coverage_message:
                 st.caption(st.session_state.search_coverage_message)
             show_partials = False
@@ -135,28 +157,48 @@ def render_search(providers: dict) -> None:
             if st.session_state.search_query and not display_results and not st.session_state.search_failures and not st.session_state.search_coverage_message:
                 st.caption("No matching series found.")
             coverage_active = st.session_state.search_coverage_start is not None and st.session_state.search_coverage_end is not None
-            for index, candidate in enumerate(display_results):
+            for candidate in display_results:
+                identity = candidate_unique_key(candidate)
                 left, right = st.columns([0.86, 0.14], vertical_alignment="center")
                 with left:
                     coverage = _coverage_html(candidate) if coverage_active else ""
                     st.markdown(f'<div class="search-row"><div class="search-title">{html.escape(candidate.title)}</div><div class="meta-line">{_meta(candidate)}</div>{coverage}</div>', unsafe_allow_html=True)
                 with right:
                     immediate = not candidate.requires_resolution
-                    if immediate and st.button("+ add", key=f"add_{index}_{candidate.provider}_{candidate.candidate_id}", width="stretch"):
-                        try:
-                            _fetch_and_add(candidate, providers)
-                        except Exception as exc:
-                            st.error(str(exc))
+                    if immediate:
+                        resolved_key = resolve_candidate(candidate).series_key
+                        added = candidate_is_added(candidate, st.session_state.workspace)
+                        if st.button("added" if added else "+ add", key=f"add:{identity}", width="stretch", disabled=added):
+                            success, _ = _fetch_and_add(candidate, providers)
+                            if success:
+                                st.rerun()
+                if immediate and resolved_key in st.session_state.search_unavailable:
+                    st.caption(f"Unavailable — {st.session_state.search_unavailable[resolved_key]}")
                 if candidate.requires_resolution:
                     with st.expander("resolve before adding"):
-                        try:
-                            if candidate.provider == "world_bank":
+                        active = st.session_state.search_resolution_active.get(identity, False)
+                        if not active:
+                            if st.button("load resolution options", key=f"load:{identity}"):
+                                st.session_state.search_resolution_active[identity] = True
+                                st.rerun()
+                        elif candidate.provider == "world_bank":
+                            try:
                                 countries = providers["World Bank"].countries()
                                 labels = {f"{item['name']} ({item['id']})": item["id"] for item in countries}
-                                selected_label = st.selectbox("Geography / economy", list(labels), key=f"geo_{index}")
-                                if st.button("add resolved series", key=f"resolve_wb_{index}"):
-                                    _fetch_and_add(candidate, providers, {"geography": labels[selected_label]})
-                            elif candidate.provider == "eia":
+                                selected_label = st.selectbox("Geography / economy", list(labels), key=f"geo:{identity}")
+                                resolution = {"geography": labels[selected_label]}
+                                resolved_key = resolve_candidate(candidate, resolution).series_key
+                                added = candidate_is_added(candidate, st.session_state.workspace, resolution)
+                                if st.button("added" if added else "add resolved series", key=f"resolve:{resolved_key}", disabled=added):
+                                    success, _ = _fetch_and_add(candidate, providers, resolution)
+                                    if success:
+                                        st.rerun()
+                                if resolved_key in st.session_state.search_unavailable:
+                                    st.caption(f"Unavailable for {selected_label} — {st.session_state.search_unavailable[resolved_key]}")
+                            except Exception as exc:
+                                st.caption(f"Unavailable — {redact_secrets(str(exc))}")
+                        elif candidate.provider == "eia":
+                            try:
                                 route = candidate.metadata.get("route", "")
                                 selections = {}
                                 for facet in candidate.metadata.get("facets", []):
@@ -164,13 +206,21 @@ def render_search(providers: dict) -> None:
                                     values = providers["EIA"].facet_values(route, facet_id)
                                     options = {f"{v.get('name', v.get('id'))} ({v.get('id')})": v.get("id") for v in values}
                                     if options:
-                                        label = st.selectbox(facet.get("description", facet_id) if isinstance(facet, dict) else facet_id, list(options), key=f"eia_{index}_{facet_id}")
+                                        label = st.selectbox(facet.get("description", facet_id) if isinstance(facet, dict) else facet_id, list(options), key=f"eia:{identity}:{facet_id}")
                                         selections[facet_id] = options[label]
                                 frequencies = candidate.metadata.get("frequencies", [])
                                 frequency_options = [f.get("id") if isinstance(f, dict) else str(f) for f in frequencies]
-                                frequency = st.selectbox("Frequency", frequency_options, key=f"eia_freq_{index}") if frequency_options else None
-                                if st.button("add resolved series", key=f"resolve_eia_{index}"):
-                                    _fetch_and_add(candidate, providers, {"facets": selections, "frequency": frequency}, candidate.metadata.get("value_field"))
-                        except Exception as exc:
-                            st.error(str(exc))
+                                frequency = st.selectbox("Frequency", frequency_options, key=f"eia-frequency:{identity}") if frequency_options else None
+                                resolution = {"facets": selections, "frequency": frequency}
+                                value_field = candidate.metadata.get("value_field")
+                                resolved_key = resolve_candidate(candidate, resolution, value_field).series_key
+                                added = candidate_is_added(candidate, st.session_state.workspace, resolution, value_field)
+                                if st.button("added" if added else "add resolved series", key=f"resolve:{resolved_key}", disabled=added):
+                                    success, _ = _fetch_and_add(candidate, providers, resolution, value_field)
+                                    if success:
+                                        st.rerun()
+                                if resolved_key in st.session_state.search_unavailable:
+                                    st.caption(f"Unavailable for this resolution — {st.session_state.search_unavailable[resolved_key]}")
+                            except Exception as exc:
+                                st.caption(f"Unavailable — {redact_secrets(str(exc))}")
                 st.markdown("<hr>", unsafe_allow_html=True)

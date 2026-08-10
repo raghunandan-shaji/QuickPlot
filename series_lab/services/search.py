@@ -3,11 +3,19 @@ from __future__ import annotations
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
+from time import monotonic
 
 import pandas as pd
 from rapidfuzz.fuzz import ratio, token_set_ratio
 
 from series_lab.models import SeriesCandidate
+
+
+SEARCH_CACHE_TTL_SECONDS = 5 * 60
+AVAILABILITY_CACHE_TTL_SECONDS = 30 * 60
+STRONG_MARKET_TERMS = {"comex", "lbma", "futures", "future", "spot", "etf", "ticker"}
+MARKET_TERMS = STRONG_MARKET_TERMS | {"price", "index"}
+BLS_INTENT_TERMS = {"ppi", "cpi", "mining", "industry", "industrial"}
 
 
 def normalize_text(value: object) -> str:
@@ -28,6 +36,47 @@ def text_score(query: str, text: str) -> float:
     score += 150 * len(q_tokens & t_tokens) / max(1, len(q_tokens))
     score += 0.7 * token_set_ratio(q, t) + 0.3 * ratio(q, t)
     return score
+
+
+def candidate_unique_key(candidate: SeriesCandidate) -> str:
+    """Stable search-result identity independent of row position or query."""
+    return f"{normalize_text(candidate.provider)}:{candidate.candidate_id}"
+
+
+def _provider_search_cached(provider, query: str, limit: int) -> list[SeriesCandidate]:
+    key = (normalize_text(query), int(limit))
+    now = monotonic()
+    cache = getattr(provider, "_quickplot_search_cache", None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(provider, "_quickplot_search_cache", cache)
+        except Exception:
+            return provider.search(query, limit)
+    cached = cache.get(key)
+    if cached and now - cached[0] < SEARCH_CACHE_TTL_SECONDS:
+        return list(cached[1])
+    results = list(provider.search(query, limit))
+    cache[key] = (now, tuple(results))
+    return results
+
+
+def _availability_cached(provider, candidate: SeriesCandidate) -> SeriesCandidate:
+    key = candidate_unique_key(candidate)
+    now = monotonic()
+    cache = getattr(provider, "_quickplot_availability_cache", None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(provider, "_quickplot_availability_cache", cache)
+        except Exception:
+            return provider.resolve_availability(candidate)
+    cached = cache.get(key)
+    if cached and now - cached[0] < AVAILABILITY_CACHE_TTL_SECONDS:
+        return cached[1]
+    result = provider.resolve_availability(candidate)
+    cache[key] = (now, result)
+    return result
 
 
 def rank_catalog(
@@ -144,10 +193,66 @@ def evaluate_coverage(
 
 
 def candidate_relevance(candidate: SeriesCandidate, query: str) -> float:
+    metadata = " ".join(f"{key} {value}" for key, value in sorted(candidate.metadata.items()))
     searchable = " ".join(
-        filter(None, [candidate.candidate_id, candidate.title, candidate.description])
+        filter(
+            None,
+            [
+                candidate.candidate_id,
+                candidate.title,
+                candidate.description,
+                candidate.instrument_type,
+                candidate.exchange,
+                metadata,
+            ],
+        )
     )
-    return text_score(query, searchable)
+    score = text_score(query, searchable)
+    query_text = normalize_text(query)
+    query_tokens = set(query_text.split())
+    candidate_text = normalize_text(searchable)
+    provider = normalize_text(candidate.provider).replace(" ", "_")
+    strong_market_intent = bool(query_tokens & STRONG_MARKET_TERMS)
+    market_intent = strong_market_intent or bool(query_tokens & MARKET_TERMS)
+    bls_intent = bool(query_tokens & BLS_INTENT_TERMS) or "producer price" in query_text
+    market_evidence = any(
+        term in candidate_text
+        for term in ("price", "spot", "future", "futures", "index", "etf", "commodity", "bullion")
+    )
+
+    if bls_intent and provider == "bls":
+        score += 500
+    if market_intent:
+        if provider == "yahoo":
+            score += 420 if strong_market_intent else 180
+            if any(term in candidate_text for term in query_tokens & {"comex", "lbma"}):
+                score += 220
+        elif provider == "fred":
+            score += 220 if market_evidence else 40
+        elif provider == "bls" and not bls_intent:
+            score -= 520 if strong_market_intent else 220
+        elif provider == "world_bank":
+            score -= 520 if strong_market_intent else 220
+            if "natural capital" in candidate_text:
+                score -= 260
+        elif provider == "eia" and market_evidence:
+            score += 80
+    return max(0.0, score)
+
+
+def rank_candidates_by_relevance(
+    candidates: list[SeriesCandidate],
+    query: str,
+) -> list[SeriesCandidate]:
+    return sorted(
+        candidates,
+        key=lambda candidate: (
+            -candidate_relevance(candidate, query),
+            candidate.title.lower(),
+            candidate.provider,
+            candidate.candidate_id,
+        ),
+    )
 
 
 def rank_candidates_by_coverage(
@@ -204,15 +309,17 @@ def search_providers(
     failures: dict[str, str] = {}
     active = {name: providers[name] for name in selected if name in providers}
     with ThreadPoolExecutor(max_workers=min(5, max(1, len(active)))) as pool:
-        futures = {pool.submit(provider.search, query, limit): name for name, provider in active.items()}
+        futures = {
+            pool.submit(_provider_search_cached, provider, query, limit): name
+            for name, provider in active.items()
+        }
         for future in as_completed(futures):
             name = futures[future]
             try:
                 results.extend(future.result())
             except Exception as exc:
                 failures[name] = str(exc) or f"{name} search failed."
-    order = {name.lower().replace(" ", "_"): i for i, name in enumerate(selected)}
-    results.sort(key=lambda c: (order.get(c.provider, 99), c.title.lower()))
+    results = rank_candidates_by_relevance(results, query)
     if requested_start is None and requested_end is None:
         return SearchOutcome(results, failures)
     if requested_start is None or requested_end is None:
@@ -225,7 +332,14 @@ def search_providers(
     if yahoo_provider:
         yahoo_candidates = [candidate for candidate in results if candidate.provider == "yahoo" and (not candidate.start_date or not candidate.end_date)]
         top_yahoo = sorted(yahoo_candidates, key=lambda candidate: candidate_relevance(candidate, query), reverse=True)[:3]
-        enriched = {candidate.candidate_id: yahoo_provider.resolve_availability(candidate) for candidate in top_yahoo}
+        with ThreadPoolExecutor(max_workers=max(1, len(top_yahoo))) as pool:
+            enriched_results = list(
+                pool.map(
+                    lambda candidate: _availability_cached(yahoo_provider, candidate),
+                    top_yahoo,
+                )
+            )
+        enriched = {candidate.candidate_id: candidate for candidate in enriched_results}
         results = [enriched.get(candidate.candidate_id, candidate) if candidate.provider == "yahoo" else candidate for candidate in results]
 
     ranked, partial, unknown, message = apply_coverage_requirement(

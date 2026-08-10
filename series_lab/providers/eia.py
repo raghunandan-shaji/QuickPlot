@@ -22,6 +22,7 @@ class EiaProvider(DataProvider):
         super().__init__()
         self.api_key = api_key
         self._metadata_cache: dict[str, dict] = {}
+        self._facet_cache: dict[tuple[str, str], list[dict]] = {}
 
     def is_available(self) -> bool:
         return bool(self.api_key)
@@ -97,13 +98,16 @@ class EiaProvider(DataProvider):
         return [item for _, item in sorted(results, key=lambda x: x[0], reverse=True)[:limit]]
 
     def facet_values(self, route: str, facet_id: str) -> list[dict]:
-        response = self.session.get(
-            f"{self.base_url}/{route}/facet/{facet_id}/",
-            params={"api_key": self.api_key, "length": 5000},
-            timeout=REQUEST_TIMEOUT,
-        )
-        response.raise_for_status()
-        return response.json().get("response", {}).get("facets", [])
+        key = (route, facet_id)
+        if key not in self._facet_cache:
+            response = self.session.get(
+                f"{self.base_url}/{route}/facet/{facet_id}/",
+                params={"api_key": self.api_key, "length": 5000},
+                timeout=REQUEST_TIMEOUT,
+            )
+            response.raise_for_status()
+            self._facet_cache[key] = response.json().get("response", {}).get("facets", [])
+        return list(self._facet_cache[key])
 
     @staticmethod
     def parse_data(payload: dict, series_key: str, value_field: str) -> tuple[pd.DataFrame, pd.Series]:

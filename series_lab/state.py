@@ -21,6 +21,8 @@ DEFAULTS = {
     "search_coverage_mode_input": lambda: "Rank by coverage",
     "search_show_partials": lambda: False,
     "search_show_unknown": lambda: False,
+    "search_unavailable": dict,
+    "search_resolution_active": dict,
     "search_query": lambda: "",
     "selected_providers": lambda: ["FRED", "Yahoo", "BLS", "EIA", "World Bank"],
     "target_series_key": lambda: None,
