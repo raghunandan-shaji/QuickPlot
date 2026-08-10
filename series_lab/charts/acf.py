@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 from .timeseries import series_color
 
 
-def acf_chart(values: pd.Series) -> go.Figure:
-    color = series_color(str(values.name))
+def acf_chart(values: pd.Series, color_overrides: dict[str, str] | None = None) -> go.Figure:
+    color = series_color(str(values.name), color_overrides)
     fig = go.Figure()
     for lag, value in values.items():
         fig.add_shape(type="line", x0=lag, x1=lag, y0=0, y1=value, line=dict(color=color, width=1.5))

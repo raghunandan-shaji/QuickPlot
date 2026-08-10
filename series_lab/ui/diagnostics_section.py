@@ -34,6 +34,7 @@ def render_diagnostics() -> None:
         st.caption("Build the analysis dataset before running diagnostics.")
         return
     frame = prepared.analysis
+    color_overrides = st.session_state.series_color_overrides
     titles = {key: item.fetched.title for key, item in workspace.items()}
     view = st.segmented_control(
         "Diagnostic",
@@ -62,7 +63,11 @@ def render_diagnostics() -> None:
         max_allowed = max(1, min(100, frame[key].notna().sum() - 1))
         max_lag = st.slider("Maximum lag", 1, max_allowed, min(24, max_allowed))
         try:
-            st.plotly_chart(acf_chart(autocorrelation_values(frame[key], max_lag)), width="stretch", config={"displaylogo": False})
+            st.plotly_chart(
+                acf_chart(autocorrelation_values(frame[key], max_lag), color_overrides),
+                width="stretch",
+                config={"displaylogo": False},
+            )
         except Exception as exc:
             st.warning(str(exc))
     elif view in {"Lag scan", "Rolling correlation"}:
@@ -83,7 +88,7 @@ def render_diagnostics() -> None:
             st.info(LAG_CONVENTION)
             values = {key: lag_correlations(frame[target], frame[key], max_lag, method) for key in selected}
             if values:
-                st.plotly_chart(lag_chart(values, titles), width="stretch", config={"displaylogo": False})
+                st.plotly_chart(lag_chart(values, titles, color_overrides), width="stretch", config={"displaylogo": False})
                 strongest = []
                 for key, series in values.items():
                     valid = series.dropna()
@@ -97,7 +102,7 @@ def render_diagnostics() -> None:
             max_window = max(2, min(250, len(frame)))
             window = st.slider("Rolling window (analysis periods)", 2, max_window, min(24, max_window))
             values = rolling_pair_correlation(frame[target], frame[candidate], window, method)
-            fig = go.Figure(go.Scatter(x=values.index, y=values, mode="lines", line=dict(color=series_color(candidate), width=1.8), name=titles.get(candidate, candidate)))
+            fig = go.Figure(go.Scatter(x=values.index, y=values, mode="lines", line=dict(color=series_color(candidate, color_overrides), width=1.8), name=titles.get(candidate, candidate)))
             fig.update_layout(height=500, paper_bgcolor="#F5F5F1", plot_bgcolor="#F5F5F1", font=dict(family="IBM Plex Mono, monospace", color="#4B5149"), yaxis=dict(range=[-1.05, 1.05], gridcolor="#E1E4DC"), xaxis=dict(gridcolor="#E1E4DC"), margin=dict(l=55, r=24, t=30, b=55))
             st.plotly_chart(fig, width="stretch", config={"displaylogo": False})
             st.caption("Rolling association can vary within the prepared sample; this does not establish regimes, causality, or predictive value.")

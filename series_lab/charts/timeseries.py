@@ -1,20 +1,12 @@
 from __future__ import annotations
 
-from hashlib import sha256
-
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from series_lab.services.colors import SERIES_PALETTE as PALETTE
+from series_lab.services.colors import series_color
 
-PALETTE = [
-    "#8FA58A", "#A394B2", "#C39385", "#B6A15F", "#799E94", "#A98996",
-    "#8E9E6C", "#879BA4", "#B29A7E", "#789487", "#A596B8", "#B6A171",
-]
-
-
-def series_color(series_key: str) -> str:
-    return PALETTE[int(sha256(series_key.encode()).hexdigest()[:8], 16) % len(PALETTE)]
 
 
 def _x_range(frame: pd.DataFrame):
@@ -52,18 +44,20 @@ def overlay_chart(
     rangeslider: bool = False,
     markers: bool = False,
     y_log: bool = False,
+    color_overrides: dict[str, str] | None = None,
 ) -> go.Figure:
     titles = titles or {}
     fig = go.Figure()
     for column in frame.columns:
+        color = series_color(column, color_overrides)
         fig.add_trace(
             go.Scatter(
                 x=frame.index,
                 y=frame[column],
                 name=titles.get(column, column),
                 mode="lines+markers" if markers else "lines",
-                line=dict(color=series_color(column), width=2.05),
-                marker=dict(size=4),
+                line=dict(color=color, width=2.05),
+                marker=dict(color=color, size=4),
                 connectgaps=False,
             )
         )
@@ -80,6 +74,7 @@ def small_multiples(
     grid: bool = True,
     markers: bool = False,
     y_log: bool = False,
+    color_overrides: dict[str, str] | None = None,
 ) -> go.Figure:
     titles = titles or {}
     fig = make_subplots(
@@ -87,11 +82,12 @@ def small_multiples(
         subplot_titles=[titles.get(c, c) for c in frame.columns], vertical_spacing=0.05,
     )
     for row, column in enumerate(frame.columns, start=1):
+        color = series_color(column, color_overrides)
         fig.add_trace(
             go.Scatter(
                 x=frame.index, y=frame[column], name=titles.get(column, column),
                 mode="lines+markers" if markers else "lines",
-                line=dict(color=series_color(column), width=1.9), marker=dict(size=3), showlegend=False,
+                line=dict(color=color, width=1.9), marker=dict(color=color, size=3), showlegend=False,
             ), row=row, col=1,
         )
     fig.update_layout(

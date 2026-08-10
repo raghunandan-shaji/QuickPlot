@@ -12,7 +12,7 @@ from series_lab.services.visualization import (
     frame_bounds,
     layer_bounds_by_series,
 )
-from series_lab.ui.series_controls import identity_html, visibility_widget_key
+from series_lab.ui.series_controls import identity_html, render_color_editor, visibility_widget_key
 
 
 def _date_label(value) -> str:
@@ -44,10 +44,12 @@ def render_visualize() -> None:
             widget_key = visibility_widget_key(key)
             if widget_key not in st.session_state:
                 st.session_state[widget_key] = item.visible
-            left, right = st.columns([0.88, 0.12], vertical_alignment="center")
+            swatch, left, right = st.columns([0.05, 0.83, 0.12], vertical_alignment="center")
+            with swatch:
+                render_color_editor(key, "series_shown", muted=not st.session_state[widget_key])
             with left:
                 transform_detail = TRANSFORM_LABELS.get(item.transform, item.transform)
-                st.markdown(identity_html(key, item.fetched.title, muted=not st.session_state[widget_key], detail=transform_detail), unsafe_allow_html=True)
+                st.markdown(identity_html(key, item.fetched.title, muted=not st.session_state[widget_key], detail=transform_detail, include_swatch=False), unsafe_allow_html=True)
             with right:
                 shown = st.checkbox(
                     f"Show {item.fetched.title}",
@@ -135,9 +137,25 @@ def render_visualize() -> None:
         return
 
     if layout == "Overlay":
-        fig = overlay_chart(frame, chart_titles, legend, grid, rangeslider, markers, y_scale == "Log")
+        fig = overlay_chart(
+            frame,
+            chart_titles,
+            legend,
+            grid,
+            rangeslider,
+            markers,
+            y_scale == "Log",
+            st.session_state.series_color_overrides,
+        )
     else:
-        fig = small_multiples(frame, chart_titles, grid, markers, y_scale == "Log")
+        fig = small_multiples(
+            frame,
+            chart_titles,
+            grid,
+            markers,
+            y_scale == "Log",
+            st.session_state.series_color_overrides,
+        )
     st.plotly_chart(fig, width="stretch", config={"responsive": True, "displaylogo": False, "scrollZoom": True})
     st.session_state.main_chart_html = fig.to_html(include_plotlyjs="cdn", full_html=True)
 

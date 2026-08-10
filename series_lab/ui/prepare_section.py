@@ -9,6 +9,7 @@ from series_lab.models import PrepareConfig
 from series_lab.services.harmonize import harmonize, normalize_frequency
 from series_lab.services.preparation import apply_aggregation_setting, apply_transform_setting
 from series_lab.services.transforms import TRANSFORM_LABELS
+from series_lab.ui.series_controls import render_color_editor
 
 
 FREQUENCY_OPTIONS = {
@@ -56,9 +57,11 @@ def _render_editable_row(series_key, item, workspace, config) -> None:
     )
 
     with st.container(key=f"prep_row_{token}"):
-        title, transform, dot, aggregation, bulk = st.columns(
-            [0.52, 0.14, 0.025, 0.20, 0.115], vertical_alignment="center"
+        swatch, title, transform, dot, aggregation, bulk = st.columns(
+            [0.04, 0.48, 0.14, 0.025, 0.20, 0.115], vertical_alignment="center"
         )
+        with swatch:
+            render_color_editor(series_key, "preparation")
         title.markdown(f'<div class="prep-series-title">{html.escape(item.fetched.title)}</div>', unsafe_allow_html=True)
         with transform:
             with st.popover(current_transform):

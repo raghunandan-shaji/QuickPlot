@@ -6,11 +6,16 @@ import plotly.graph_objects as go
 from .timeseries import series_color
 
 
-def lag_chart(values: dict[str, pd.Series], titles: dict[str, str] | None = None) -> go.Figure:
+def lag_chart(
+    values: dict[str, pd.Series],
+    titles: dict[str, str] | None = None,
+    color_overrides: dict[str, str] | None = None,
+) -> go.Figure:
     titles = titles or {}
     fig = go.Figure()
     for key, series in values.items():
-        fig.add_trace(go.Scatter(x=series.index, y=series.values, name=titles.get(key, key), mode="lines+markers", line=dict(color=series_color(key), width=1.8), marker=dict(size=5)))
+        color = series_color(key, color_overrides)
+        fig.add_trace(go.Scatter(x=series.index, y=series.values, name=titles.get(key, key), mode="lines+markers", line=dict(color=color, width=1.8), marker=dict(color=color, size=5)))
     fig.add_hline(y=0, line_color="#C5CBC1", line_width=1)
     fig.update_layout(
         height=520, margin=dict(l=55, r=24, t=35, b=60),

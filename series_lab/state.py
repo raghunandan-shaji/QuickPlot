@@ -30,6 +30,7 @@ DEFAULTS = {
     "prepared_data": lambda: None,
     "prepare_inline_error": lambda: None,
     "prepare_last_transform_change": lambda: None,
+    "series_color_overrides": dict,
     "provider_statuses": dict,
 }
 
