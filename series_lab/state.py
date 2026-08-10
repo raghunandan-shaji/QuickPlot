@@ -28,6 +28,8 @@ DEFAULTS = {
     "target_series_key": lambda: None,
     "prepare_config": PrepareConfig,
     "prepared_data": lambda: None,
+    "prepare_inline_error": lambda: None,
+    "prepare_last_transform_change": lambda: None,
     "provider_statuses": dict,
 }
 

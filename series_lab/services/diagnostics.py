@@ -8,6 +8,8 @@ from scipy.stats import skew
 from statsmodels.tsa.stattools import acf as sm_acf
 from statsmodels.tsa.stattools import adfuller, kpss
 
+from series_lab.models import PreparedData
+
 
 LAG_CONVENTION = "Positive lag k = Y observed k periods before X."
 
@@ -33,6 +35,11 @@ def summary_statistics(frame: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows).set_index("series") if rows else pd.DataFrame()
+
+
+def prepared_summary_statistics(prepared: PreparedData) -> pd.DataFrame:
+    """Summarize aligned prepared values before analysis transforms."""
+    return summary_statistics(prepared.harmonized)
 
 
 def correlation_matrix(frame: pd.DataFrame, method: str = "pearson") -> pd.DataFrame:

@@ -13,9 +13,9 @@ from series_lab.services.diagnostics import (
     autocorrelation_values,
     correlation_matrix,
     lag_correlations,
+    prepared_summary_statistics,
     rolling_pair_correlation,
     stationarity_tests,
-    summary_statistics,
 )
 
 
@@ -43,8 +43,11 @@ def render_diagnostics() -> None:
         key="diagnostic_view",
     ) or "Summary"
     if view == "Summary":
-        st.caption(f"Effective common date range: {prepared.effective_start or '—'} — {prepared.effective_end or '—'}")
-        table = summary_statistics(frame).rename(index=titles)
+        st.caption(
+            "Original prepared values (before transforms) · "
+            f"effective common date range: {prepared.effective_start or '—'} — {prepared.effective_end or '—'}"
+        )
+        table = prepared_summary_statistics(prepared).rename(index=titles)
         st.dataframe(table, width="stretch")
     elif view == "Correlation":
         method = st.radio("Method", ["Pearson", "Spearman"], horizontal=True).lower()

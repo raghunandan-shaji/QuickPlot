@@ -37,6 +37,16 @@ p, label, .stMarkdown, [data-testid="stWidgetLabel"] { font-size:1rem; }
 .analysis-status { color:#596A54; font-size:.84rem; margin-bottom:.4rem; }
 .analysis-range { font-size:1rem; color:var(--ink); margin-bottom:.3rem; }
 .analysis-meta { color:var(--muted); font-size:.8rem; line-height:1.55; }
+.prep-series-title { font-size:.9rem; line-height:1.35; color:var(--ink); }
+.prep-separator { color:var(--muted); text-align:center; }
+[class*="st-key-prep_row_"] { padding:.22rem 0; border-bottom:1px solid rgba(217,221,212,.65); }
+[class*="st-key-prep_row_"] [data-testid="stPopover"] > button {
+  background:transparent !important; border:0 !important; color:var(--muted) !important;
+  min-height:1.7rem !important; padding:.12rem .2rem !important; box-shadow:none !important;
+  font-size:.82rem !important; justify-content:flex-start !important;
+}
+[class*="st-key-prep_row_"] [data-testid="stPopover"] > button:hover { color:var(--ink) !important; background:var(--pale-lilac) !important; }
+[class*="st-key-prep_row_"] .stButton > button { min-height:1.8rem; padding:.18rem .45rem; font-size:.76rem; }
 hr { border:none; border-top:1px solid var(--border); margin:.6rem 0; }
 .stButton > button, .stDownloadButton > button, [data-testid="stFormSubmitButton"] button {
   border:1px solid var(--border); background:var(--surface); color:var(--ink); border-radius:2px; box-shadow:none; min-height:2.55rem;
